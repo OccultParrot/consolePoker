@@ -1,49 +1,51 @@
 import asyncio
 import json
-import argparse
+import pyperclip
 from websockets.asyncio.client import connect
+from textual.app import App, ComposeResult
+from textual.widgets import Button, Static, Input, LoadingIndicator
+from textual.containers import Horizontal, Container
 
-parser = argparse.ArgumentParser(description="Poker Client")
-parser.add_argument("--code", type=str, help="Game code to join", required=False)
-
-
-async def handler(websocket):
-    async for message in websocket:
-        data = json.loads(message)
-
-        if data.get("type") == "game_created":
-            code = data["data"]["code"]
-            print(f"\n✓ Game created successfully!")
-            print(f"Game code: {code}")
-            print(f"Share this code with other players to join.")
-
-        else:
-            print(f"\nReceived from server: {data}")
+from screens.menu_screen import MenuScreen
 
 
-async def main():
-    args = parser.parse_args()
+class ClientApp(App):
+    BINDINGS = []
+    TITLE = "Poker.py Client"
 
-    async with connect("ws://localhost:8001") as websocket:
-        asyncio.create_task(handler(websocket))
+    def __init__(self):
+        self.websocket = None
+        super().__init__()
 
-        if args.code:
-            join_event = {
-                "type": "join",
-                "data": {"code": args.code}
-            }
-            await websocket.send(json.dumps(join_event))
-            print(f"Joining game with code: {args.code}")
-        else:
-            create_event = {
-                "type": "create",
-                "data": {}
-            }
-            await websocket.send(json.dumps(create_event))
-            print("Creating a new game")
+    async def on_mount(self) -> None:
+        try:
+            self.websocket = await connect("ws://localhost:8001")
+            self.notify("Connected to server", severity="information")
+            asyncio.create_task(self.listen_for_events())
 
-        await asyncio.Future()  # run forever
+            await self.push_screen(MenuScreen())
+        except Exception as e:
+            self.notify(f"Failed to connect to server: [yellow i]{e}[/]\nApplication [bold]WILL NOT WORK AS EXPECTED",
+                        severity="error")
+            return
+
+        asyncio.create_task(self.listen_for_events())
+
+    async def listen_for_events(self):
+        async for message in self.websocket:
+            try:
+                data = json.loads(message)
+                if data["type"] == "game_created":
+                    self.notify(f"Game created: {data['data']['code']}")
+            except json.JSONDecodeError:
+                self.notify("Received invalid JSON from server.")
+
+    async def _on_exit_app(self) -> None:
+        if self.websocket:
+            await self.websocket.close()
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    # asyncio.run(main())
+    app = ClientApp()
+    app.run()
